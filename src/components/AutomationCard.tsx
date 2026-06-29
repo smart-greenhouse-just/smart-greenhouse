@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Droplet, Sun, Wind, Lock, Unlock, ShieldAlert } from "lucide-react";
 import { RealtimeState } from "@/services/realtime";
 
@@ -16,11 +16,47 @@ export function AutomationCard({ state, onToggle }: AutomationCardProps) {
     fan: false,
   });
 
-  const [lastRun] = useState<Record<string, string>>({
-    pump: "10 mins ago",
-    growLight: "2 hours ago",
-    fan: "Just now",
+  const [now, setNow] = useState(Date.now());
+
+  // Use refs to track last active times and avoid setState inside useEffect/render
+  const lastActiveTimesRef = useRef<Record<string, number | null>>({
+    pump: null,
+    growLight: null,
+    fan: null,
   });
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setNow(Date.now());
+    }, 10000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Update last active times immediately during render when state updates
+  if (state?.actuators) {
+    (Object.keys(state.actuators) as Array<keyof typeof state.actuators>).forEach((key) => {
+      if (state.actuators[key] === true) {
+        lastActiveTimesRef.current[key] = now;
+      }
+    });
+  }
+
+  const formatLastRun = (key: string, isActive: boolean) => {
+    if (isActive) return "Running now";
+    const lastTime = lastActiveTimesRef.current[key];
+    if (!lastTime) return "Not run recently";
+    
+    const diffMs = now - lastTime;
+    const diffSecs = Math.floor(diffMs / 1000);
+    if (diffSecs < 5) return "Just now";
+    if (diffSecs < 60) return `${diffSecs} secs ago`;
+    
+    const diffMins = Math.floor(diffSecs / 60);
+    if (diffMins < 60) return `${diffMins} min${diffMins > 1 ? "s" : ""} ago`;
+    
+    const diffHours = Math.floor(diffMins / 60);
+    return `${diffHours} hour${diffHours > 1 ? "s" : ""} ago`;
+  };
 
   const toggleLock = (key: string) => {
     setLocks((prev) => ({ ...prev, [key]: !prev[key] }));
@@ -113,7 +149,7 @@ export function AutomationCard({ state, onToggle }: AutomationCardProps) {
             </div>
 
             <div className="mt-4.5 border-t border-border/50 pt-3 flex items-center justify-between text-[10px] text-muted-foreground">
-              <span>Last Run: {isActive ? "Just now" : lastRun[act.key]}</span>
+              <span>Last Run: {formatLastRun(act.key, isActive)}</span>
               {isLocked && (
                 <span className="flex items-center gap-1 text-red-500 font-semibold uppercase tracking-wide">
                   <ShieldAlert className="h-3 w-3" /> Locked

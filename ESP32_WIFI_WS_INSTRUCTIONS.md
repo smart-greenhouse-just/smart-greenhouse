@@ -115,6 +115,8 @@ unsigned long lastTelemetryTime = 0;
 const unsigned long telemetryInterval = telemetryIntervalSeconds * 1000UL;
 unsigned long lastDisplaySwitch = 0;
 int displayState = 0;
+unsigned long pumpOverrideStartTime = 0;
+const unsigned long pumpOverrideDuration = 600000UL; // 10 minutes override safety window in milliseconds
 
 void setup() {
   Serial.begin(115200);
@@ -189,6 +191,7 @@ void onMessageCallback(WebsocketsMessage message) {
     if (strcmp(actuator, "pump") == 0) {
       pumpON = value;
       pumpOverride = true; // Flag override active
+      pumpOverrideStartTime = millis(); // Record override start timestamp
       if (pumpON) {
         pinMode(RELAYPIN, OUTPUT);
         digitalWrite(RELAYPIN, LOW);
@@ -298,9 +301,11 @@ void loop() {
       if (pumpON) { pumpON = false; sendTelemetry(); }
     }
   } else {
-    // Reset override if sensor crosses bounds again to maintain safety
-    if (moisturePercent < 20 || moisturePercent > 50) {
-      pumpOverride = false; 
+    // Reset override only if 10-minute window has elapsed AND pump is ON and soil is wet enough
+    if (millis() - pumpOverrideStartTime >= pumpOverrideDuration) {
+      if (pumpON && moisturePercent > 50) {
+        pumpOverride = false; 
+      }
     }
   }
 
