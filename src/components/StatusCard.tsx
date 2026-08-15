@@ -1,24 +1,33 @@
 "use client";
 
-import { Wifi, Server, Database, Activity, Camera } from "lucide-react";
+import { Wifi, Database, Activity } from "lucide-react";
 import { RealtimeState } from "@/services/realtime";
 
 interface StatusCardProps {
   state: RealtimeState | null;
 }
 
-export function StatusCard({ state }: StatusCardProps) {
-  const getSignalStrengthLabel = (strength: number) => {
-    if (strength === -100) return "Offline";
-    if (strength >= -60) return "Excellent";
-    if (strength >= -75) return "Good";
-    return "Fair";
-  };
+function rssiToPercentage(rssi: number): number {
+  if (rssi <= -100) return 0;
+  if (rssi >= -50) return 100;
+  return Math.min(100, Math.max(0, Math.round(2 * (rssi + 100))));
+}
 
+function getSignalQuality(rssi: number) {
+  if (rssi <= -100) return { label: "Offline", quality: "Disconnected", color: "text-red-500", bg: "bg-red-500/10", indicatorColor: "bg-red-500" };
+  const percent = rssiToPercentage(rssi);
+  if (percent >= 75) return { label: "Excellent", quality: "Very Strong Signal", color: "text-emerald-500", bg: "bg-emerald-500/10", indicatorColor: "bg-emerald-500" };
+  if (percent >= 55) return { label: "Good", quality: "Strong & Stable", color: "text-emerald-500", bg: "bg-emerald-500/10", indicatorColor: "bg-emerald-500" };
+  if (percent >= 35) return { label: "Fair", quality: "Moderate Signal", color: "text-amber-500", bg: "bg-amber-500/10", indicatorColor: "bg-amber-500" };
+  return { label: "Weak", quality: "Weak Connection", color: "text-red-500", bg: "bg-red-500/10", indicatorColor: "bg-red-500" };
+}
+
+export function StatusCard({ state }: StatusCardProps) {
   const isOnline = state?.espStatus === "online";
-  const isCameraOnline = state?.cameraStatus === "online";
-  const wsOk = state?.mqttStatus === "connected";
   const dbOk = state?.dbStatus === "connected";
+  const wifiRssi = state?.wifiStrength ?? -100;
+  const wifiPercent = isOnline ? rssiToPercentage(wifiRssi) : 0;
+  const wifiQuality = isOnline ? getSignalQuality(wifiRssi) : getSignalQuality(-100);
 
   const systemMetrics = [
     {
@@ -32,30 +41,13 @@ export function StatusCard({ state }: StatusCardProps) {
     },
     {
       title: "WiFi Strength",
-      status: isOnline ? `${state?.wifiStrength} dBm` : "Offline",
-      detail: getSignalStrengthLabel(state?.wifiStrength ?? -100),
+      status: isOnline ? `${wifiPercent}%` : "Offline",
+      detail: isOnline ? `${wifiQuality.quality} (${wifiRssi} dBm)` : "No Active Signal",
       icon: Wifi,
-      color: isOnline ? "text-emerald-500" : "text-red-500",
-      bgColor: isOnline ? "bg-emerald-500/10" : "bg-red-500/10",
-      indicatorColor: isOnline ? "bg-emerald-500" : "bg-red-500",
-    },
-    {
-      title: "ESP32 Camera",
-      status: isCameraOnline ? "Online" : "Offline",
-      detail: isCameraOnline ? "Stream Ready" : "Disconnected",
-      icon: Camera,
-      color: isCameraOnline ? "text-emerald-500" : "text-red-500",
-      bgColor: isCameraOnline ? "bg-emerald-500/10" : "bg-red-500/10",
-      indicatorColor: isCameraOnline ? "bg-emerald-500" : "bg-red-500",
-    },
-    {
-      title: "WS Connection",
-      status: wsOk ? "Active" : "Inactive",
-      detail: wsOk ? `ws://localhost:${process.env.NEXT_PUBLIC_WS_PORT || "3001"}` : "Reconnecting daemon...",
-      icon: Server,
-      color: wsOk ? "text-emerald-500" : "text-amber-500",
-      bgColor: wsOk ? "bg-emerald-500/10" : "bg-amber-500/10",
-      indicatorColor: wsOk ? "bg-emerald-500" : "bg-amber-500",
+      color: wifiQuality.color,
+      bgColor: wifiQuality.bg,
+      indicatorColor: wifiQuality.indicatorColor,
+      progressPercent: isOnline ? wifiPercent : 0,
     },
     {
       title: "Database Status",
@@ -69,7 +61,7 @@ export function StatusCard({ state }: StatusCardProps) {
   ];
 
   return (
-    <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5">
+    <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-3">
       {systemMetrics.map((item, index) => {
         const Icon = item.icon;
         return (
@@ -96,7 +88,22 @@ export function StatusCard({ state }: StatusCardProps) {
               </span>
             </div>
 
-            <span className="mt-1 text-[11px] text-muted-foreground leading-relaxed">
+            {item.progressPercent !== undefined && (
+              <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-muted/60">
+                <div
+                  className={`h-full rounded-full transition-all duration-500 ${
+                    item.progressPercent >= 70
+                      ? "bg-emerald-500"
+                      : item.progressPercent >= 40
+                      ? "bg-amber-500"
+                      : "bg-red-500"
+                  }`}
+                  style={{ width: `${item.progressPercent}%` }}
+                />
+              </div>
+            )}
+
+            <span className="mt-1.5 text-[11px] text-muted-foreground leading-relaxed">
               {item.detail}
             </span>
           </div>

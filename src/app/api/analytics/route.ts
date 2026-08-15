@@ -1,13 +1,13 @@
 import { NextResponse } from "next/server";
 import { dbConnect } from "@/services/database";
-import { SensorLog } from "@/models/SensorLog";
+import { SensorLog, getSensorAverage } from "@/models/SensorLog";
 import { Command } from "@/models/Command";
 import { Device } from "@/models/Device";
 import "@/services/websocketServer";
 
 const DEVICE_ID = process.env.NEXT_PUBLIC_DEVICE_ID || "esp32-greenhouse-01";
 
-export async function GET(_request: Request) {
+export async function GET() {
   try {
     await dbConnect();
 
@@ -20,13 +20,13 @@ export async function GET(_request: Request) {
     }).lean();
 
     let sumTemp = 0, sumHum = 0, sumSoil = 0, sumLight = 0;
-    const count = history.length || 1;
+    const count = history.length;
 
     history.forEach((log) => {
-      sumTemp += log.temperature;
-      sumHum += log.humidity;
-      sumSoil += log.soilMoisture;
-      sumLight += log.lightIntensity;
+      sumTemp += getSensorAverage(log.temperature);
+      sumHum += getSensorAverage(log.humidity);
+      sumSoil += getSensorAverage(log.soilMoisture);
+      sumLight += getSensorAverage(log.lightIntensity);
     });
 
     const device = await Device.findOne({ deviceId: DEVICE_ID }).lean();
@@ -34,12 +34,12 @@ export async function GET(_request: Request) {
     const failedCommandCount = await Command.countDocuments({ deviceId: DEVICE_ID, status: "failed" });
 
     const summary = {
-      avgTemperature: count > 1 ? parseFloat((sumTemp / count).toFixed(1)) : 24.2,
-      avgHumidity: count > 1 ? parseFloat((sumHum / count).toFixed(1)) : 62.5,
-      avgSoilMoisture: count > 1 ? Math.round(sumSoil / count) : 45,
-      avgLightIntensity: count > 1 ? Math.round(sumLight / count) : 380,
-      totalImagesCaptured: 18,
-      deviceUptime: device?.status === "online" ? 99.85 : 97.4,
+      avgTemperature: count > 0 ? parseFloat((sumTemp / count).toFixed(1)) : 0,
+      avgHumidity: count > 0 ? parseFloat((sumHum / count).toFixed(1)) : 0,
+      avgSoilMoisture: count > 0 ? Math.round(sumSoil / count) : 0,
+      avgLightIntensity: count > 0 ? Math.round(sumLight / count) : 0,
+      totalImagesCaptured: 0,
+      deviceUptime: device?.status === "online" ? 100 : 0,
     };
 
     const performance = {

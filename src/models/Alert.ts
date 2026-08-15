@@ -3,7 +3,7 @@ import mongoose, { Schema, Document, Model } from "mongoose";
 export interface IAlert extends Document {
   deviceId: string;
   severity: "info" | "warning" | "critical";
-  sensor: "temperature" | "humidity" | "soilMoisture" | "light" | "waterLevel" | "airQuality" | "system";
+  sensor: "temperature" | "humidity" | "soilMoisture" | "light" | "system";
   value?: number;
   message: string;
   suggestedAction?: string;
@@ -26,8 +26,6 @@ const AlertSchema: Schema = new Schema(
         "humidity",
         "soilMoisture",
         "light",
-        "waterLevel",
-        "airQuality",
         "system",
       ],
       required: true,

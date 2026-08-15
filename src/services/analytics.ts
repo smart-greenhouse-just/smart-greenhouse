@@ -37,19 +37,25 @@ async function fetchAll() {
   }
 }
 
-export async function getSummary(_deviceId: string): Promise<AnalyticsSummary> {
+export async function getSummary(deviceId?: string): Promise<AnalyticsSummary> {
+  if (deviceId) {
+    // future proof deviceId parameter routing
+  }
   const data = await fetchAll();
   return data?.summary || {
-    avgTemperature: 24.2,
-    avgHumidity: 62.5,
-    avgSoilMoisture: 45,
-    avgLightIntensity: 380,
-    totalImagesCaptured: 18,
-    deviceUptime: 99.85,
+    avgTemperature: 0,
+    avgHumidity: 0,
+    avgSoilMoisture: 0,
+    avgLightIntensity: 0,
+    totalImagesCaptured: 0,
+    deviceUptime: 0,
   };
 }
 
-export async function getSystemPerformance(_deviceId: string): Promise<SystemPerformance> {
+export async function getSystemPerformance(deviceId?: string): Promise<SystemPerformance> {
+  if (deviceId) {
+    // future proof deviceId parameter routing
+  }
   const data = await fetchAll();
   return data?.performance || {
     uptimePercentage: 99.85,
@@ -61,7 +67,10 @@ export async function getSystemPerformance(_deviceId: string): Promise<SystemPer
   };
 }
 
-export async function getLeafHealthReport(_deviceId: string): Promise<LeafHealthReport> {
+export async function getLeafHealthReport(deviceId?: string): Promise<LeafHealthReport> {
+  if (deviceId) {
+    // future proof deviceId parameter routing
+  }
   const data = await fetchAll();
   return data?.leafReport || {
     healthyCount: 112,

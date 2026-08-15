@@ -17,7 +17,6 @@ import {
   Smile,
   LayoutDashboard,
   Sliders,
-  Camera,
   ClipboardList,
 } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -45,35 +44,42 @@ export default function Dashboard() {
   const [activeTab, setActiveTab] = useState("overview");
 
   useEffect(() => {
-    if (!state) return;
+    if (!state?.sensors) return;
     const sensors = state.sensors;
+    if (sensors.temperature === undefined && sensors.humidity === undefined) return;
     
     const timer = setTimeout(() => {
       setHistory((prev) => {
-        const updateList = (key: string, newVal: number) => {
-          const list = prev[key] || Array.from({ length: 8 }, () => ({ value: newVal + (Math.random() - 0.5) * 2 }));
-          const nextList = [...list.slice(1), { value: newVal }];
+        const updateList = (key: string, newVal: number | undefined) => {
+          if (newVal === undefined) return prev[key] || [];
+          const list = prev[key] || [];
+          const nextList = [...list.slice(list.length >= 10 ? 1 : 0), { value: newVal }];
           return nextList;
         };
+
+        const rawLight = sensors.lightIntensity;
+        const lightPct = rawLight !== undefined
+          ? Math.min(100, Math.max(0, Math.round(((3400 - rawLight) / 3400) * 100)))
+          : undefined;
 
         return {
           temp: updateList("temp", sensors.temperature),
           hum: updateList("hum", sensors.humidity),
           soil: updateList("soil", sensors.soilMoisture),
-          light: updateList("light", sensors.lightIntensity),
+          light: updateList("light", lightPct),
         };
       });
     }, 0);
 
     return () => clearTimeout(timer);
-  }, [state]);
+  }, [state?.sensors]);
 
   if (!state) {
     return (
       <div className="mx-auto max-w-5xl space-y-8 py-6">
         <div className="h-6 w-48 animate-pulse rounded-lg bg-card" />
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          {Array.from({ length: 4 }).map((_, i) => (
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {Array.from({ length: 6 }).map((_, i) => (
             <div key={i} className="h-28 animate-pulse rounded-2xl bg-card" />
           ))}
         </div>
@@ -92,51 +98,82 @@ export default function Dashboard() {
   }
 
   const s = state.sensors;
+  const hasSensors = s && (s.temperature !== undefined || s.humidity !== undefined);
 
-  const getTemperatureStatus = (t: number) => {
+  const getTemperatureStatus = (t?: number) => {
+    if (t === undefined) return { status: "No Data" as const, text: "Awaiting telemetry stream", color: "text-muted-foreground", bg: "bg-muted/40" };
     if (t < 18) return { status: "Critical" as const, text: "Too Cold (Under 18°C)", color: "text-red-500", bg: "bg-red-500/10" };
     if (t <= 28) return { status: "Optimal" as const, text: "Ideal Range (18-28°C)", color: "text-emerald-500", bg: "bg-emerald-500/10" };
     if (t <= 32) return { status: "Warning" as const, text: "Approaching Limits", color: "text-amber-500", bg: "bg-amber-500/10" };
     return { status: "Critical" as const, text: "Overheating (Above 32°C)", color: "text-red-500", bg: "bg-red-500/10" };
   };
 
-  const getHumidityStatus = (h: number) => {
+  const getHumidityStatus = (h?: number) => {
+    if (h === undefined) return { status: "No Data" as const, text: "Awaiting telemetry stream", color: "text-muted-foreground", bg: "bg-muted/40" };
     if (h < 40) return { status: "Critical" as const, text: "Air dry (Under 40%)", color: "text-red-500", bg: "bg-red-500/10" };
     if (h <= 75) return { status: "Optimal" as const, text: "Ideal Transpiration", color: "text-emerald-500", bg: "bg-emerald-500/10" };
     if (h <= 85) return { status: "Warning" as const, text: "High condensation risk", color: "text-amber-500", bg: "bg-amber-500/10" };
     return { status: "Critical" as const, text: "Fungal mold risk (Above 85%)", color: "text-red-500", bg: "bg-red-500/10" };
   };
 
-  const getSoilStatus = (sm: number) => {
+  const getSoilStatus = (sm?: number) => {
+    if (sm === undefined) return { status: "No Data" as const, text: "Awaiting telemetry stream", color: "text-muted-foreground", bg: "bg-muted/40" };
     if (sm < 25) return { status: "Critical" as const, text: "Wilting point danger", color: "text-red-500", bg: "bg-red-500/10" };
     if (sm <= 65) return { status: "Optimal" as const, text: "Excellent root moisture", color: "text-emerald-500", bg: "bg-emerald-500/10" };
     if (sm <= 80) return { status: "Warning" as const, text: "Saturated rootzone", color: "text-amber-500", bg: "bg-amber-500/10" };
     return { status: "Critical" as const, text: "Anaerobic soil drowning", color: "text-red-500", bg: "bg-red-500/10" };
   };
 
-  const getLightStatus = (l: number) => {
-    if (l < 50) return { status: "Warning" as const, text: "Low photosynthesis rate", color: "text-amber-500", bg: "bg-amber-500/10" };
-    if (l <= 900) return { status: "Optimal" as const, text: "Healthy growth light", color: "text-emerald-500", bg: "bg-emerald-500/10" };
-    return { status: "Warning" as const, text: "Excess light heat exposure", color: "text-amber-500", bg: "bg-amber-500/10" };
+  const getLightStatus = (raw?: number) => {
+    if (raw === undefined) return { status: "No Data" as const, text: "Awaiting telemetry stream", color: "text-muted-foreground", bg: "bg-muted/40" };
+    if (raw >= 3400) return { status: "Warning" as const, text: "Light ON (Dark Ambient)", color: "text-amber-500", bg: "bg-amber-500/10" };
+    return { status: "Optimal" as const, text: "Light OFF (Adequate Light)", color: "text-emerald-500", bg: "bg-emerald-500/10" };
   };
 
   const tempObj = getTemperatureStatus(s.temperature);
   const humObj = getHumidityStatus(s.humidity);
   const soilObj = getSoilStatus(s.soilMoisture);
-  const lightObj = getLightStatus(s.lightIntensity);
+  const rawLdr = s.lightIntensity;
+  const lightPercent = rawLdr !== undefined
+    ? Math.min(100, Math.max(0, Math.round(((3400 - rawLdr) / 3400) * 100)))
+    : undefined;
 
-  const scoreDeductions = 
-    (tempObj.status !== "Optimal" ? 10 : 0) +
-    (humObj.status !== "Optimal" ? 8 : 0) +
-    (soilObj.status !== "Optimal" ? 15 : 0);
-  const healthScore = Math.max(40, 100 - scoreDeductions);
+  const lightObj = getLightStatus(rawLdr);
+
+  const scoreDeductions = hasSensors
+    ? (tempObj.status !== "Optimal" ? 15 : 0) +
+      (humObj.status !== "Optimal" ? 15 : 0) +
+      (soilObj.status !== "Optimal" ? 20 : 0) +
+      (lightObj.status !== "Optimal" ? 10 : 0)
+    : 0;
+  const healthScore = hasSensors ? Math.max(35, 100 - scoreDeductions) : 0;
+
+  // Dynamic VPD and Dew Point calculation
+  let vpdText = "--";
+  let dewPointText = "--";
+  if (s.temperature !== undefined && s.humidity !== undefined) {
+    const T = s.temperature;
+    const H = s.humidity;
+    const vpSat = 0.61078 * Math.exp((17.27 * T) / (T + 237.3));
+    const vpAct = vpSat * (H / 100);
+    const vpd = Math.max(0, vpSat - vpAct);
+    vpdText = `${vpd.toFixed(2)} kPa`;
+
+    const a = 17.27;
+    const b = 237.3;
+    const alpha = (a * T) / (b + T) + Math.log(H / 100);
+    const dew = (b * alpha) / (a - alpha);
+    dewPointText = `${dew.toFixed(1)} °C`;
+  }
+
+  const lastUpdatedFormatted = s.timestamp ? new Date(s.timestamp).toLocaleTimeString() : "No telemetry recorded";
 
   return (
     <div className="mx-auto max-w-5xl space-y-6">
       <div className="flex flex-col gap-1">
         <h1 className="font-sans text-xl font-extrabold text-foreground tracking-tight">Greenhouse Cockpit</h1>
         <p className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wider">
-          Node ID: esp32-greenhouse-01 • Realtime Stream
+          Node ID: esp32-greenhouse-01 • Multi-Sensor Realtime Stream
         </p>
       </div>
 
@@ -166,17 +203,6 @@ export default function Dashboard() {
           Actuators
         </button>
         <button
-          onClick={() => setActiveTab("camera")}
-          className={`flex items-center gap-1.5 px-4 py-2.5 text-[11px] font-extrabold uppercase tracking-wider transition-all border-b-2 -mb-px ${
-            activeTab === "camera"
-              ? "border-primary text-primary"
-              : "border-transparent text-muted-foreground hover:text-foreground"
-          }`}
-        >
-          <Camera className="h-4 w-4" />
-          Camera & AI
-        </button>
-        <button
           onClick={() => setActiveTab("logs")}
           className={`flex items-center gap-1.5 px-4 py-2.5 text-[11px] font-extrabold uppercase tracking-wider transition-all border-b-2 -mb-px ${
             activeTab === "logs"
@@ -202,7 +228,8 @@ export default function Dashboard() {
               colorClass={tempObj.color}
               bgColorClass={tempObj.bg}
               historyData={history.temp || []}
-              lastUpdated={new Date(s.timestamp).toLocaleTimeString()}
+              lastUpdated={lastUpdatedFormatted}
+              totalSensors={state.sensorDetails?.temperature?.totalSensors}
             />
             <SensorCard
               title="Air Humidity"
@@ -214,7 +241,8 @@ export default function Dashboard() {
               colorClass={humObj.color}
               bgColorClass={humObj.bg}
               historyData={history.hum || []}
-              lastUpdated={new Date(s.timestamp).toLocaleTimeString()}
+              lastUpdated={lastUpdatedFormatted}
+              totalSensors={state.sensorDetails?.humidity?.totalSensors}
             />
             <SensorCard
               title="Soil Moisture"
@@ -226,19 +254,22 @@ export default function Dashboard() {
               colorClass={soilObj.color}
               bgColorClass={soilObj.bg}
               historyData={history.soil || []}
-              lastUpdated={new Date(s.timestamp).toLocaleTimeString()}
+              lastUpdated={lastUpdatedFormatted}
+              totalSensors={state.sensorDetails?.soilMoisture?.totalSensors}
             />
             <SensorCard
               title="Light Intensity"
-              value={s.lightIntensity}
-              unit="Lux"
+              value={lightPercent}
+              unit="%"
               icon={Sun}
               status={lightObj.status}
               statusText={lightObj.text}
               colorClass={lightObj.color}
               bgColorClass={lightObj.bg}
               historyData={history.light || []}
-              lastUpdated={new Date(s.timestamp).toLocaleTimeString()}
+              lastUpdated={lastUpdatedFormatted}
+              secondaryInfo={rawLdr !== undefined ? `Raw ADC: ${rawLdr}` : undefined}
+              totalSensors={state.sensorDetails?.lightIntensity?.totalSensors}
             />
           </div>
 
@@ -262,17 +293,27 @@ export default function Dashboard() {
                       strokeWidth="6"
                       fill="transparent"
                       strokeDasharray="213.6"
-                      strokeDashoffset={213.6 - (213.6 * healthScore) / 100}
+                      strokeDashoffset={hasSensors ? 213.6 - (213.6 * healthScore) / 100 : 213.6}
                     />
                   </svg>
-                  <span className="absolute text-sm font-extrabold text-foreground">{healthScore}%</span>
+                  <span className="absolute text-sm font-extrabold text-foreground">
+                    {hasSensors ? `${healthScore}%` : "--"}
+                  </span>
                 </div>
                 <div className="space-y-1">
                   <h4 className="text-xs font-extrabold text-foreground">
-                    {healthScore >= 85 ? "Excellent Status" : healthScore >= 70 ? "Stable Status" : "Action Required"}
+                    {!hasSensors
+                      ? "Standby Mode"
+                      : healthScore >= 85
+                      ? "Excellent Status"
+                      : healthScore >= 70
+                      ? "Stable Status"
+                      : "Action Required"}
                   </h4>
                   <p className="text-[10.5px] text-muted-foreground font-medium leading-normal">
-                    Composite score aggregated across temperature, air humidity, soil hydration, and light levels.
+                    {hasSensors
+                      ? "Composite score aggregated across temperature, air humidity, soil hydration, lighting, water levels, and air purity."
+                      : "Awaiting telemetry stream from ESP32 node. Connect hardware to compute live health metrics."}
                   </p>
                 </div>
               </div>
@@ -288,16 +329,18 @@ export default function Dashboard() {
               <div className="space-y-2.5">
                 <div className="flex items-center justify-between text-xs font-semibold">
                   <span className="text-muted-foreground">Vapor Pressure Deficit:</span>
-                  <span className="text-foreground">1.14 kPa <span className="text-emerald-500 font-bold">(Ideal)</span></span>
+                  <span className="text-foreground">
+                    {vpdText} {vpdText !== "--" && <span className="text-emerald-500 font-bold">(Calculated)</span>}
+                  </span>
                 </div>
                 <div className="flex items-center justify-between text-xs font-semibold">
                   <span className="text-muted-foreground">Dew Point Temperature:</span>
-                  <span className="text-foreground">15.8 °C</span>
+                  <span className="text-foreground">{dewPointText}</span>
                 </div>
                 <div className="flex items-center justify-between text-xs font-semibold">
                   <span className="text-muted-foreground">Microclimate Comfort:</span>
                   <span className="inline-flex items-center gap-1 text-emerald-500 font-bold uppercase tracking-wider text-[9px]">
-                    <TrendingUp className="h-3.5 w-3.5" /> High Yield
+                    <TrendingUp className="h-3.5 w-3.5" /> {hasSensors ? "Active Monitoring" : "Standby"}
                   </span>
                 </div>
               </div>

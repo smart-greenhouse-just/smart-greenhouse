@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import { Droplet, Sun, Wind, Lock, Unlock, ShieldAlert } from "lucide-react";
 import { RealtimeState } from "@/services/realtime";
 
@@ -16,35 +16,52 @@ export function AutomationCard({ state, onToggle }: AutomationCardProps) {
     fan: false,
   });
 
-  const [now, setNow] = useState(Date.now());
-
-  // Use refs to track last active times and avoid setState inside useEffect/render
-  const lastActiveTimesRef = useRef<Record<string, number | null>>({
+  const [now, setNow] = useState<number>(0);
+  const [lastActiveTimes, setLastActiveTimes] = useState<Record<string, number | null>>({
     pump: null,
     growLight: null,
     fan: null,
   });
 
   useEffect(() => {
+    const current = Date.now();
+    const timer = setTimeout(() => {
+      setNow(current);
+    }, 0);
     const interval = setInterval(() => {
       setNow(Date.now());
     }, 10000);
-    return () => clearInterval(interval);
+    return () => {
+      clearTimeout(timer);
+      clearInterval(interval);
+    };
   }, []);
 
-  // Update last active times immediately during render when state updates
-  if (state?.actuators) {
-    (Object.keys(state.actuators) as Array<keyof typeof state.actuators>).forEach((key) => {
-      if (state.actuators[key] === true) {
-        lastActiveTimesRef.current[key] = now;
-      }
-    });
-  }
+  const actuatorsState = state?.actuators;
+  useEffect(() => {
+    if (actuatorsState) {
+      const current = Date.now();
+      const timer = setTimeout(() => {
+        setLastActiveTimes((prev) => {
+          let changed = false;
+          const next = { ...prev };
+          (Object.keys(actuatorsState) as Array<keyof typeof actuatorsState>).forEach((key) => {
+            if (actuatorsState[key] === true) {
+              next[key] = current;
+              changed = true;
+            }
+          });
+          return changed ? next : prev;
+        });
+      }, 0);
+      return () => clearTimeout(timer);
+    }
+  }, [actuatorsState]);
 
   const formatLastRun = (key: string, isActive: boolean) => {
     if (isActive) return "Running now";
-    const lastTime = lastActiveTimesRef.current[key];
-    if (!lastTime) return "Not run recently";
+    const lastTime = lastActiveTimes[key];
+    if (!lastTime || !now) return "Not run recently";
     
     const diffMs = now - lastTime;
     const diffSecs = Math.floor(diffMs / 1000);

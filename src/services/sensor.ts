@@ -1,20 +1,14 @@
 export interface SensorData {
-  temperature: number;
-  humidity: number;
-  soilMoisture: number;
-  lightIntensity: number;
-  timestamp: Date;
+  temperature?: number;
+  humidity?: number;
+  soilMoisture?: number;
+  lightIntensity?: number;
+  timestamp?: Date;
 }
 
-export async function getCurrentData(deviceId: string): Promise<SensorData> {
+export async function getCurrentData(deviceId: string): Promise<SensorData | null> {
   const history = await getHistory(deviceId, "24h");
-  return history[history.length - 1] || {
-    temperature: 24.0,
-    humidity: 60.0,
-    soilMoisture: 40,
-    lightIntensity: 300,
-    timestamp: new Date(),
-  };
+  return history[history.length - 1] || null;
 }
 
 export async function getHistory(_deviceId: string, timeframe: string): Promise<SensorData[]> {

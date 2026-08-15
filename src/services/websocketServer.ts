@@ -1,6 +1,6 @@
 import { WebSocketServer, WebSocket } from "ws";
 import { dbConnect } from "./database";
-import { SensorLog } from "@/models/SensorLog";
+import { SensorLog, getSensorAverage, normalizeSensorMetric, ISensorMetric } from "@/models/SensorLog";
 import { Device } from "@/models/Device";
 import { Command } from "@/models/Command";
 import { CapturedImage } from "@/models/CapturedImage";
@@ -9,10 +9,10 @@ const WS_PORT = Number(process.env.WS_PORT || 3001);
 const DEVICE_ID = process.env.NEXT_PUBLIC_DEVICE_ID || "esp32-greenhouse-01";
 
 interface TelemetryData {
-  temperature?: number;
-  humidity?: number;
-  soilMoisture?: number;
-  lightIntensity?: number;
+  temperature?: ISensorMetric | number | number[];
+  humidity?: ISensorMetric | number | number[];
+  soilMoisture?: ISensorMetric | number | number[];
+  lightIntensity?: ISensorMetric | number | number[];
   wifiStrength?: number;
   pump?: boolean;
   growLight?: boolean;
@@ -105,12 +105,18 @@ export function initializeWebSocketServer() {
             (ws as CustomWebSocket).isEsp = true;
             await dbConnect();
             const d = payload.data || {};
+
+            const normTemp = normalizeSensorMetric(d.temperature, "°C", 24.1);
+            const normHum = normalizeSensorMetric(d.humidity, "%", 65.1);
+            const normSoil = normalizeSensorMetric(d.soilMoisture, "%", 45);
+            const normLight = normalizeSensorMetric(d.lightIntensity, "ADC", 850);
+
             const log = new SensorLog({
               deviceId: payload.deviceId || DEVICE_ID,
-              temperature: Number(d.temperature ?? 24.0),
-              humidity: Number(d.humidity ?? 60.0),
-              soilMoisture: Number(d.soilMoisture ?? 40),
-              lightIntensity: Number(d.lightIntensity ?? 300),
+              temperature: normTemp,
+              humidity: normHum,
+              soilMoisture: normSoil,
+              lightIntensity: normLight,
               timestamp: new Date(),
             });
             await log.save();
@@ -132,11 +138,17 @@ export function initializeWebSocketServer() {
               mqttStatus: "connected",
               dbStatus: "connected",
               sensors: {
-                temperature: log.temperature,
-                humidity: log.humidity,
-                soilMoisture: log.soilMoisture,
-                lightIntensity: log.lightIntensity,
+                temperature: getSensorAverage(normTemp),
+                humidity: getSensorAverage(normHum),
+                soilMoisture: getSensorAverage(normSoil),
+                lightIntensity: getSensorAverage(normLight),
                 timestamp: log.timestamp,
+              },
+              sensorDetails: {
+                temperature: normTemp,
+                humidity: normHum,
+                soilMoisture: normSoil,
+                lightIntensity: normLight,
               },
               actuators: {
                 pump: Boolean(d.pump ?? false),
@@ -145,7 +157,7 @@ export function initializeWebSocketServer() {
               },
             });
 
-            broadcast(broadcastData);
+            broadcast(broadcastData, ws);
           } 
           else if (payload.type === "camera_telemetry") {
             (ws as CustomWebSocket).isCamera = true;

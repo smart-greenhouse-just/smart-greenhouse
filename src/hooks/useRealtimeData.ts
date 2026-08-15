@@ -26,36 +26,62 @@ export function useRealtimeData() {
 
       socket.onopen = () => {
         console.log("[WebSocket Client] Connected to greenhouse server");
-        setData((prev) => {
-          if (prev) {
-            return {
-              ...prev,
-              espStatus: "offline",
-              cameraStatus: "offline",
+        fetch("/api/sensors/history?timeframe=24h")
+          .then((res) => res.json())
+          .then((history) => {
+            if (Array.isArray(history) && history.length > 0) {
+              const last = history[history.length - 1];
+              setData((prev) => ({
+                espStatus: prev?.espStatus ?? "offline",
+                cameraStatus: prev?.cameraStatus ?? "offline",
+                wifiStrength: prev?.wifiStrength ?? -100,
+                mqttStatus: "connected",
+                dbStatus: "connected",
+                sensors: {
+                  temperature: last.temperature,
+                  humidity: last.humidity,
+                  soilMoisture: last.soilMoisture,
+                  lightIntensity: last.lightIntensity,
+                  timestamp: new Date(last.timestamp),
+                },
+                sensorDetails: last.sensorDetails,
+                actuators: prev?.actuators ?? {
+                  pump: false,
+                  growLight: false,
+                  fan: false,
+                },
+              }));
+            } else {
+              setData((prev) => ({
+                espStatus: prev?.espStatus ?? "offline",
+                cameraStatus: prev?.cameraStatus ?? "offline",
+                wifiStrength: prev?.wifiStrength ?? -100,
+                mqttStatus: "connected",
+                dbStatus: "connected",
+                sensors: {},
+                actuators: prev?.actuators ?? {
+                  pump: false,
+                  growLight: false,
+                  fan: false,
+                },
+              }));
+            }
+          })
+          .catch(() => {
+            setData((prev) => ({
+              espStatus: prev?.espStatus ?? "offline",
+              cameraStatus: prev?.cameraStatus ?? "offline",
+              wifiStrength: prev?.wifiStrength ?? -100,
               mqttStatus: "connected",
               dbStatus: "connected",
-            };
-          }
-          return {
-            espStatus: "offline",
-            cameraStatus: "offline",
-            wifiStrength: -100,
-            mqttStatus: "connected",
-            dbStatus: "connected",
-            sensors: {
-              temperature: 24.0,
-              humidity: 60.0,
-              soilMoisture: 40,
-              lightIntensity: 300,
-              timestamp: new Date(),
-            },
-            actuators: {
-              pump: false,
-              growLight: false,
-              fan: false,
-            },
-          };
-        });
+              sensors: {},
+              actuators: prev?.actuators ?? {
+                pump: false,
+                growLight: false,
+                fan: false,
+              },
+            }));
+          });
       };
 
       socket.onmessage = (event) => {

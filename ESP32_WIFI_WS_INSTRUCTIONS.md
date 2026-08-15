@@ -23,16 +23,36 @@ This document defines the sensor configurations, WebSocket transmission formats,
 The ESP32 communicates directly with the Next.js WebSocket daemon at `ws://<server-ip>:3001`.
 
 ### Telemetry Send Format (ESP32 -> Server)
-Dispatched once every 60 seconds (or immediately when an actuator state changes).
+Dispatched once every 5 seconds (or immediately when an actuator state changes). Each metric supports multi-sensor telemetry arrays with `sensorId`, `value`, `unit`, and `totalSensors`.
 ```json
 {
   "type": "telemetry",
   "deviceId": "esp32-greenhouse-01",
   "data": {
-    "temperature": 25.4,
-    "humidity": 62.0,
-    "soilMoisture": 45,
-    "lightIntensity": 3200,
+    "temperature": {
+      "totalSensors": 1,
+      "sensors": [
+        { "sensorId": 1, "value": 24.1, "unit": "°C" }
+      ]
+    },
+    "humidity": {
+      "totalSensors": 1,
+      "sensors": [
+        { "sensorId": 1, "value": 65.1, "unit": "%" }
+      ]
+    },
+    "soilMoisture": {
+      "totalSensors": 1,
+      "sensors": [
+        { "sensorId": 1, "value": 45, "unit": "%" }
+      ]
+    },
+    "lightIntensity": {
+      "totalSensors": 1,
+      "sensors": [
+        { "sensorId": 1, "value": 850, "unit": "ADC" }
+      ]
+    },
     "wifiStrength": -65,
     "pump": false,
     "growLight": false,
@@ -70,54 +90,86 @@ Add the following libraries to your Arduino IDE before uploading:
 #include <LiquidCrystal_I2C.h>
 #include <DHT.h>
 
-// WiFi Configuration
-const char* ssid = "YOUR_WIFI_SSID";
-const char* password = "YOUR_WIFI_PASSWORD";
+// ==============================================================================
+// 1. NETWORK & WEBSOCKET CONFIGURATION
+// ==============================================================================
+const char* ssid = "Honor 400";
+const char* password = "12345678";
+const char* ws_url = "ws://172.21.149.117:3001"; // Next.js WebSocket Server address (Port 3001)
+const char* deviceId = "esp32-greenhouse-01";
 
-// Next.js WebSocket Server address (Port 3001)
-const char* ws_url = "ws://192.168.1.100:3001"; // REPLACE WITH YOUR NEXTJS SERVER IP
+// ==============================================================================
+// 2. HARDWARE PIN DEFINITIONS
+// ==============================================================================
+#define RELAYPIN    23  // Water Pump Relay (Active LOW)
+#define FANRELAY    27  // Cooling Fan Relay (Active LOW)
+#define LIGHTRELAY  25  // Grow Light Relay (Active LOW)
 
-// Pin Definitions
-#define RELAYPIN 23
-#define FANRELAY 27
-#define LIGHTRELAY 25
+#define SOILPIN     35  // Soil Moisture Analog Pin (ADC)
+#define LDRPIN      32  // Light Dependent Resistor Analog Pin (ADC)
 
-#define SOILPIN 35
-#define LDRPIN 32
+#define DHTPIN      4   // DHT Sensor Pin
+#define DHTTYPE     DHT11 // Sensor Type (DHT11 or DHT22)
 
-#define DHTPIN 4
-#define DHTTYPE DHT11
+// ==============================================================================
+// 3. SENSOR CALIBRATION & AUTOMATION THRESHOLDS (NO MAGIC NUMBERS)
+// ==============================================================================
+// Soil Moisture Calibration (Raw 12-bit ADC: 0 - 4095)
+const int soilDryADC = 3500;  // Dry soil ADC reading (0% moisture)
+const int soilWetADC = 1500;  // Wet soil ADC reading (100% moisture)
+const int soilPumpOnThreshold = 30;  // Moisture % below which pump turns ON
+const int soilPumpOffThreshold = 45; // Moisture % above which pump turns OFF
+const int soilOverrideSafeThreshold = 50; // Moisture % above which manual pump override safely disengages
 
-// Instances
+// Light Sensor Thresholds (Raw 12-bit ADC: 0 - 4095)
+const int darkLightThresholdADC = 3400; // >= 3400 turns ON grow light, < 3400 turns OFF grow light
+
+// Temperature Thresholds (in °C)
+const float tempFanOnThreshold = 27.0;       // Temperature above which cooling fan turns ON
+const float tempEmergencyMaxThreshold = 32.0; // Emergency heat threshold to automatically reset fan override
+
+// ==============================================================================
+// 4. TIMERS, INTERVALS & MANUAL OVERRIDE DURATIONS
+// ==============================================================================
+const unsigned long telemetryIntervalMs = 5000UL;   // Telemetry dispatch interval (5s periodic sends)
+const unsigned long lcdSwitchIntervalMs = 2000UL;   // LCD sequential screen cycling interval (2s)
+const unsigned long wsReconnectIntervalMs = 10000UL; // WebSocket reconnection retry interval (10s)
+const unsigned long loopYieldDelayMs = 50UL;        // Non-blocking loop yield delay
+
+// Manual Web Dashboard Override Safety Durations
+const unsigned long pumpOverrideDurationMs = 60000UL; // 1 minute safety window for manual pump (60s)
+const unsigned long fanOverrideDurationMs = 30000UL;  // 30 seconds safety window for manual fan (30s)
+const unsigned long lightOverrideDurationMs = 30000UL; // 30 seconds safety window for manual light (30s)
+
+// ==============================================================================
+// 5. GLOBAL STATE & TRACKING VARIABLES
+// ==============================================================================
+bool pumpON = false;
+bool fanON = false;
+bool lightON = false;
+
+bool pumpOverride = false;
+bool fanOverride = false;
+bool lightOverride = false;
+
+unsigned long lastTelemetryTime = 0;
+unsigned long lastDisplaySwitch = 0;
+unsigned long lastReconnectAttempt = 0;
+int displayState = 0;
+
+unsigned long pumpOverrideStartTime = 0;
+unsigned long fanOverrideStartTime = 0;
+unsigned long lightOverrideStartTime = 0;
+
+// Hardware & Network Instances
 LiquidCrystal_I2C lcd(0x27, 16, 2);
 DHT dht(DHTPIN, DHTTYPE);
 using namespace websockets;
 WebsocketsClient client;
 
-// Threshold values
-int dryValue = 3500;
-int wetValue = 1500;
-int darkValue = 3500;
-
-// Dynamic States
-bool pumpON = false;
-bool fanON = false;
-bool lightON = false;
-
-// Override Flags (Allows manual commands to temporarily bypass automatic sensor thresholds)
-bool pumpOverride = false;
-bool fanOverride = false;
-bool lightOverride = false;
-
-// Timers & Intervals
-const int telemetryIntervalSeconds = 60; // Configurable telemetry interval in seconds (change this value to adjust frequency)
-unsigned long lastTelemetryTime = 0;
-const unsigned long telemetryInterval = telemetryIntervalSeconds * 1000UL;
-unsigned long lastDisplaySwitch = 0;
-int displayState = 0;
-unsigned long pumpOverrideStartTime = 0;
-const unsigned long pumpOverrideDuration = 600000UL; // 10 minutes override safety window in milliseconds
-
+// ==============================================================================
+// 6. SETUP & INITIALIZATION
+// ==============================================================================
 void setup() {
   Serial.begin(115200);
 
@@ -126,7 +178,7 @@ void setup() {
 
   dht.begin();
 
-  // Initial Pin setup matching user's original logic
+  // Initial Pin setup matching active LOW relay logic
   pinMode(RELAYPIN, INPUT);
   pinMode(FANRELAY, INPUT);
   pinMode(LIGHTRELAY, INPUT);
@@ -169,29 +221,30 @@ void connectWebSocket() {
   }
 }
 
+// ==============================================================================
+// 7. WEBSOCKET MESSAGE HANDLER (INCOMING DASHBOARD CONTROLS)
+// ==============================================================================
 void onMessageCallback(WebsocketsMessage message) {
-  Serial.print("WebSocket Payload Received: ");
-  Serial.println(message.data());
-
   // Parse incoming JSON commands
   StaticJsonDocument<256> doc;
   DeserializationError error = deserializeJson(doc, message.data());
 
   if (error) {
-    Serial.print("JSON Deserialization failed: ");
-    Serial.println(error.c_str());
     return;
   }
 
   const char* type = doc["type"];
   if (type && strcmp(type, "control") == 0) {
+    Serial.print("Control Command Received: ");
+    Serial.println(message.data());
+
     const char* actuator = doc["actuator"];
     bool value = doc["value"];
 
     if (strcmp(actuator, "pump") == 0) {
       pumpON = value;
       pumpOverride = true; // Flag override active
-      pumpOverrideStartTime = millis(); // Record override start timestamp
+      pumpOverrideStartTime = millis(); // Record override start timestamp (60s safety timeout)
       if (pumpON) {
         pinMode(RELAYPIN, OUTPUT);
         digitalWrite(RELAYPIN, LOW);
@@ -202,6 +255,7 @@ void onMessageCallback(WebsocketsMessage message) {
     else if (strcmp(actuator, "fan") == 0) {
       fanON = value;
       fanOverride = true; // Flag override active
+      fanOverrideStartTime = millis(); // Record override start timestamp (30s safety timeout)
       if (fanON) {
         pinMode(FANRELAY, OUTPUT);
         digitalWrite(FANRELAY, LOW);
@@ -212,6 +266,7 @@ void onMessageCallback(WebsocketsMessage message) {
     else if (strcmp(actuator, "growLight") == 0) {
       lightON = value;
       lightOverride = true; // Flag override active
+      lightOverrideStartTime = millis(); // Record override start timestamp (30s safety timeout)
       if (lightON) {
         pinMode(LIGHTRELAY, OUTPUT);
         digitalWrite(LIGHTRELAY, LOW);
@@ -220,7 +275,7 @@ void onMessageCallback(WebsocketsMessage message) {
       }
     }
     
-    // Echo state changes immediately
+    // Echo state changes immediately to update UI in real time
     sendTelemetry();
   }
 }
@@ -233,6 +288,9 @@ void onEventsCallback(WebsocketsEvent event, String data) {
   }
 }
 
+// ==============================================================================
+// 8. TELEMETRY DISPATCH (SEND MULTI-SENSOR STRUCTURED JSON)
+// ==============================================================================
 void sendTelemetry() {
   if (!client.available()) return;
 
@@ -241,18 +299,56 @@ void sendTelemetry() {
   float humidity = dht.readHumidity();
   float temperature = dht.readTemperature();
 
-  int moisturePercent = map(soilValue, dryValue, wetValue, 0, 100);
+  int moisturePercent = map(soilValue, soilDryADC, soilWetADC, 0, 100);
   moisturePercent = constrain(moisturePercent, 0, 100);
 
-  StaticJsonDocument<512> doc;
+  // Invert and map LDR ADC reading to percentage: darkLightThresholdADC (3400) -> 0%, bright (0) -> 100%
+  int lightPercent = map(ldrValue, darkLightThresholdADC, 0, 0, 100);
+  lightPercent = constrain(lightPercent, 0, 100);
+
+  // Allocate document buffer for structured multi-sensor payload
+  StaticJsonDocument<1024> doc;
   doc["type"] = "telemetry";
-  doc["deviceId"] = "esp32-greenhouse-01";
+  doc["deviceId"] = deviceId;
   
   JsonObject data = doc.createNestedObject("data");
-  data["temperature"] = isnan(temperature) ? 24.0 : temperature;
-  data["humidity"] = isnan(humidity) ? 60.0 : humidity;
-  data["soilMoisture"] = moisturePercent;
-  data["lightIntensity"] = ldrValue;
+
+  // 1. Temperature (Multi-Sensor Structured Format)
+  JsonObject tempObj = data.createNestedObject("temperature");
+  tempObj["totalSensors"] = 1;
+  JsonArray tempSensors = tempObj.createNestedArray("sensors");
+  JsonObject temp1 = tempSensors.createNestedObject();
+  temp1["sensorId"] = 1;
+  temp1["value"] = isnan(temperature) ? 24.1 : temperature;
+  temp1["unit"] = "°C";
+
+  // 2. Humidity (Multi-Sensor Structured Format)
+  JsonObject humObj = data.createNestedObject("humidity");
+  humObj["totalSensors"] = 1;
+  JsonArray humSensors = humObj.createNestedArray("sensors");
+  JsonObject hum1 = humSensors.createNestedObject();
+  hum1["sensorId"] = 1;
+  hum1["value"] = isnan(humidity) ? 65.1 : humidity;
+  hum1["unit"] = "%";
+
+  // 3. Soil Moisture (Multi-Sensor Structured Format)
+  JsonObject soilObj = data.createNestedObject("soilMoisture");
+  soilObj["totalSensors"] = 1;
+  JsonArray soilSensors = soilObj.createNestedArray("sensors");
+  JsonObject soil1 = soilSensors.createNestedObject();
+  soil1["sensorId"] = 1;
+  soil1["value"] = moisturePercent;
+  soil1["unit"] = "%";
+
+  // 4. Light Intensity (Send raw ldrValue to be stored directly in MongoDB database)
+  JsonObject lightObj = data.createNestedObject("lightIntensity");
+  lightObj["totalSensors"] = 1;
+  JsonArray lightSensors = lightObj.createNestedArray("sensors");
+  JsonObject light1 = lightSensors.createNestedObject();
+  light1["sensorId"] = 1;
+  light1["value"] = ldrValue; // Raw ADC reading (0-4095)
+  light1["unit"] = "ADC";
+
   data["wifiStrength"] = WiFi.RSSI();
   data["pump"] = pumpON;
   data["growLight"] = lightON;
@@ -265,14 +361,16 @@ void sendTelemetry() {
   Serial.println(jsonString);
 }
 
+// ==============================================================================
+// 9. MAIN EXECUTION LOOP
+// ==============================================================================
 void loop() {
   // Process WebSocket frames
   if (client.available()) {
     client.poll();
   } else {
     // Attempt reconnection if disconnected
-    static unsigned long lastReconnectAttempt = 0;
-    if (millis() - lastReconnectAttempt > 10000) {
+    if (millis() - lastReconnectAttempt > wsReconnectIntervalMs) {
       lastReconnectAttempt = millis();
       connectWebSocket();
     }
@@ -284,65 +382,73 @@ void loop() {
   float humidity = dht.readHumidity();
   float temperature = dht.readTemperature();
 
-  int moisturePercent = map(soilValue, dryValue, wetValue, 0, 100);
+  int moisturePercent = map(soilValue, soilDryADC, soilWetADC, 0, 100);
   moisturePercent = constrain(moisturePercent, 0, 100);
+
+  int lightPercent = map(ldrValue, darkLightThresholdADC, 0, 0, 100);
+  lightPercent = constrain(lightPercent, 0, 100);
 
   // AUTOMATIC CONTROL RULES (Only run if no active WebSocket override)
   
-  // Water Pump Threshold Check
+  // 1. Water Pump Threshold Check
   if (!pumpOverride) {
-    if (moisturePercent < 30) {
+    if (moisturePercent < soilPumpOnThreshold) {
       pinMode(RELAYPIN, OUTPUT);
-      digitalWrite(RELAYPIN, LOW);
+      digitalWrite(RELAYPIN, LOW); // Turn ON pump
       if (!pumpON) { pumpON = true; sendTelemetry(); }
     }
-    else if (moisturePercent > 45) {
-      pinMode(RELAYPIN, INPUT);
+    else if (moisturePercent > soilPumpOffThreshold) {
+      pinMode(RELAYPIN, INPUT);    // Turn OFF pump
       if (pumpON) { pumpON = false; sendTelemetry(); }
     }
   } else {
-    // Reset override only if 10-minute window has elapsed AND pump is ON and soil is wet enough
-    if (millis() - pumpOverrideStartTime >= pumpOverrideDuration) {
-      if (pumpON && moisturePercent > 50) {
+    // Reset override only if 1-minute window has elapsed AND pump is ON and soil is wet enough
+    if (millis() - pumpOverrideStartTime >= pumpOverrideDurationMs) {
+      if (pumpON && moisturePercent > soilOverrideSafeThreshold) {
         pumpOverride = false; 
       }
     }
   }
 
-  // Cooling Fan Threshold Check
+  // 2. Cooling Fan Threshold Check
   if (!fanOverride) {
-    if (temperature > 27) {
+    if (temperature > tempFanOnThreshold) {
       pinMode(FANRELAY, OUTPUT);
-      digitalWrite(FANRELAY, LOW);
+      digitalWrite(FANRELAY, LOW); // Turn ON fan
       if (!fanON) { fanON = true; sendTelemetry(); }
     }
     else {
-      pinMode(FANRELAY, INPUT);
+      pinMode(FANRELAY, INPUT);    // Turn OFF fan
       if (fanON) { fanON = false; sendTelemetry(); }
     }
   } else {
-    // Reset override if temp deviates significantly
-    if (temperature > 32 || temperature < 24) {
+    // Reset fan override after 30-second window has elapsed (or if temp reaches critical danger)
+    if (millis() - fanOverrideStartTime >= fanOverrideDurationMs || temperature > tempEmergencyMaxThreshold) {
       fanOverride = false;
     }
   }
 
-  // Grow Light Threshold Check
+  // 3. Grow Light Threshold Check (Turn ON if dark, OFF if bright)
   if (!lightOverride) {
-    if (ldrValue < darkValue) {
+    if (ldrValue >= darkLightThresholdADC) {
       pinMode(LIGHTRELAY, OUTPUT);
-      digitalWrite(LIGHTRELAY, LOW);
+      digitalWrite(LIGHTRELAY, LOW); // Turn ON grow light
       if (!lightON) { lightON = true; sendTelemetry(); }
     }
     else {
-      pinMode(LIGHTRELAY, INPUT);
+      pinMode(LIGHTRELAY, INPUT);    // Turn OFF grow light
       if (lightON) { lightON = false; sendTelemetry(); }
+    }
+  } else {
+    // Reset light override after 30-second window has elapsed
+    if (millis() - lightOverrideStartTime >= lightOverrideDurationMs) {
+      lightOverride = false;
     }
   }
 
-  // Handle LCD Sequential Screens Printing without blocking WebSocket execution loops
+  // 4. Handle LCD Sequential Screens Printing without blocking WebSocket execution loops
   unsigned long currentMillis = millis();
-  if (currentMillis - lastDisplaySwitch >= 2000) {
+  if (currentMillis - lastDisplaySwitch >= lcdSwitchIntervalMs) {
     lastDisplaySwitch = currentMillis;
     displayState = (displayState + 1) % 3;
     lcd.clear();
@@ -376,225 +482,22 @@ void loop() {
         lcd.print("Light:");
         lcd.print(lightON ? "ON" : "OFF");
         lcd.setCursor(0, 1);
-        lcd.print("LDR:");
-        lcd.print(ldrValue);
+        lcd.print("Sun:");
+        lcd.print(lightPercent);
+        lcd.print("%");
         break;
     }
   }
 
-  // Structured Periodic Telemetry Sends
-  if (currentMillis - lastTelemetryTime >= telemetryInterval) {
+  // 5. Structured Periodic Telemetry Sends
+  if (currentMillis - lastTelemetryTime >= telemetryIntervalMs) {
     lastTelemetryTime = currentMillis;
     sendTelemetry();
   }
 
-  // Replaces the blocking delay(2000) calls from the original code to ensure non-blocking WS poll execution
-  delay(50); 
+  // Replaces blocking delay calls to ensure non-blocking WS poll execution
+  delay(loopYieldDelayMs); 
 }
 ```
 
 ---
-
-# ESP32-CAM WebSocket Sketch (OV2640 integration)
-
-Use this secondary sketch on your **ESP32-CAM** module to stream live video frames and capture snapshots for AI analysis.
-
-```cpp
-#include "esp_camera.h"
-#include <WiFi.h>
-#include <ArduinoWebsockets.h>
-#include <ArduinoJson.h>
-
-const char* ssid = "YOUR_WIFI_SSID";
-const char* password = "YOUR_WIFI_PASSWORD";
-const char* ws_server_url = "ws://192.168.1.100:3001"; // Next.js WS Daemon IP
-
-using namespace websockets;
-WebsocketsClient client;
-
-bool isStreaming = false;
-unsigned long lastHeartbeat = 0;
-unsigned long lastFrameTime = 0;
-
-// Camera configuration pinouts (AI Thinker ESP32-CAM module)
-#define PWDN_GPIO_NUM     32
-#define RESET_GPIO_NUM    -1
-#define XCLK_GPIO_NUM      0
-#define SIOD_GPIO_NUM     26
-#define SIOC_GPIO_NUM     27
-#define Y9_GPIO_NUM       35
-#define Y8_GPIO_NUM       34
-#define Y7_GPIO_NUM       39
-#define Y6_GPIO_NUM       36
-#define Y5_GPIO_NUM       21
-#define Y4_GPIO_NUM       19
-#define Y3_GPIO_NUM       18
-#define Y2_GPIO_NUM        5
-#define VSYNC_GPIO_NUM    25
-#define HREF_GPIO_NUM     23
-#define PCLK_GPIO_NUM     22
-
-void setup() {
-  Serial.begin(115200);
-  
-  // Camera init
-  camera_config_t config;
-  config.ledc_channel = LEDC_CHANNEL_0;
-  config.ledc_timer = LEDC_TIMER_0;
-  config.pin_d0 = Y2_GPIO_NUM;
-  config.pin_d1 = Y3_GPIO_NUM;
-  config.pin_d2 = Y4_GPIO_NUM;
-  config.pin_d3 = Y5_GPIO_NUM;
-  config.pin_d4 = Y6_GPIO_NUM;
-  config.pin_d5 = Y7_GPIO_NUM;
-  config.pin_d6 = Y8_GPIO_NUM;
-  config.pin_d7 = Y9_GPIO_NUM;
-  config.pin_xclk = XCLK_GPIO_NUM;
-  config.pin_pclk = PCLK_GPIO_NUM;
-  config.pin_vsync = VSYNC_GPIO_NUM;
-  config.pin_href = HREF_GPIO_NUM;
-  config.pin_sscb_sda = SIOD_GPIO_NUM;
-  config.pin_sscb_scl = SIOC_GPIO_NUM;
-  config.pin_pwdn = PWDN_GPIO_NUM;
-  config.pin_reset = RESET_GPIO_NUM;
-  config.xclk_freq_hz = 20000000;
-  config.pixel_format = PIXFORMAT_JPEG;
-  
-  // Select frame sizes based on memory constraints
-  if(psramFound()){
-    config.frame_size = FRAMESIZE_VGA;
-    config.jpeg_quality = 12;
-    config.fb_count = 2;
-  } else {
-    config.frame_size = FRAMESIZE_QVGA;
-    config.jpeg_quality = 15;
-    config.fb_count = 1;
-  }
-
-  esp_err_t err = esp_camera_init(&config);
-  if (err != ESP_OK) {
-    Serial.printf("Camera init failed with error 0x%x", err);
-    return;
-  }
-
-  // Connect to WiFi
-  WiFi.begin(ssid, password);
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    Serial.print(".");
-  }
-  Serial.println("\nWiFi Connected!");
-
-  // Event handlers for WS commands
-  client.onMessage(onMessageCallback);
-  connectWebSocket();
-}
-
-void connectWebSocket() {
-  Serial.println("Establishing camera WS handshake...");
-  if (client.connect(ws_server_url)) {
-    Serial.println("WS connection active!");
-    sendHeartbeat();
-  } else {
-    Serial.println("Handshake failed.");
-  }
-}
-
-void sendHeartbeat() {
-  StaticJsonDocument<128> doc;
-  doc["type"] = "camera_telemetry";
-  doc["deviceId"] = "esp32-camera-01";
-  String json;
-  serializeJson(doc, json);
-  client.send(json);
-}
-
-void sendFrame(bool isCapture) {
-  camera_fb_t * fb = esp_camera_fb_get();
-  if(!fb) {
-    Serial.println("Camera capture failed");
-    return;
-  }
-
-  // Base64 encode the JPEG frame
-  String base64Image = "data:image/jpeg;base64,";
-  // Simple Base64 encoder helper block
-  static const char cb64[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-  unsigned char in[3], out[4];
-  int i, len = fb->len;
-  unsigned char* p = fb->buf;
-  
-  while (len > 0) {
-    int chunk = len > 3 ? 3 : len;
-    for (i = 0; i < 3; i++) {
-      if (i < chunk) in[i] = *p++;
-      else in[i] = 0;
-    }
-    out[0] = (in[0] & 0xfc) >> 2;
-    out[1] = ((in[0] & 0x03) << 4) | ((in[1] & 0xf0) >> 4);
-    out[2] = chunk > 1 ? (((in[1] & 0x0f) << 2) | ((in[2] & 0xc0) >> 6)) : '=';
-    out[3] = chunk > 2 ? (in[2] & 0x3f) : '=';
-    
-    for (i = 0; i < 4; i++) {
-      if (out[i] == '=') base64Image += '=';
-      else base64Image += cb64[out[i]];
-    }
-    len -= chunk;
-  }
-
-  esp_camera_fb_return(fb);
-
-  StaticJsonDocument<2048> doc; // Adjust doc size as buffer limits dictate or slice
-  doc["type"] = isCapture ? "camera_capture" : "camera_frame";
-  doc["image"] = base64Image;
-  doc["deviceId"] = "esp32-camera-01";
-
-  String payload;
-  serializeJson(doc, payload);
-  client.send(payload);
-}
-
-void onMessageCallback(WebsocketsMessage message) {
-  StaticJsonDocument<256> doc;
-  DeserializationError error = deserializeJson(doc, message.data());
-  if (error) return;
-
-  const char* type = doc["type"];
-  if (strcmp(type, "capture") == 0) {
-    sendFrame(true);
-  } 
-  else if (strcmp(type, "control") == 0) {
-    const char* action = doc["action"];
-    if (strcmp(action, "start_stream") == 0) {
-      isStreaming = true;
-    } else if (strcmp(action, "stop_stream") == 0) {
-      isStreaming = false;
-    }
-  }
-}
-
-void loop() {
-  if (client.available()) {
-    client.poll();
-  } else {
-    static unsigned long lastReconnect = 0;
-    if (millis() - lastReconnect > 10000) {
-      lastReconnect = millis();
-      connectWebSocket();
-    }
-  }
-
-  // Periodic heartbeat
-  if (millis() - lastHeartbeat > 10000) {
-    lastHeartbeat = millis();
-    sendHeartbeat();
-  }
-
-  // Stream frame handling (e.g. 5 FPS / 200ms interval)
-  if (isStreaming && (millis() - lastFrameTime > 200)) {
-    lastFrameTime = millis();
-    sendFrame(false);
-  }
-}
-```
-

@@ -53,9 +53,10 @@ export function useGreenhouse() {
   useEffect(() => {
     if (!data) return;
     const sensors = data.sensors;
+    if (!sensors) return;
     const newAlerts: AlertItem[] = [];
 
-    if (sensors.soilMoisture < 25) {
+    if (sensors.soilMoisture !== undefined && sensors.soilMoisture < 25) {
       newAlerts.push({
         id: "soil-low",
         severity: "critical",
@@ -67,7 +68,7 @@ export function useGreenhouse() {
       });
     }
 
-    if (sensors.temperature > 32) {
+    if (sensors.temperature !== undefined && sensors.temperature > 32) {
       newAlerts.push({
         id: "temp-high",
         severity: "warning",
@@ -105,7 +106,7 @@ export function useGreenhouse() {
 
     const timer = setTimeout(() => {
       setAlerts((prev) => {
-        const resolvedIds = ["soil-low", "temp-high", "esp-offline", "camera-offline"].filter(
+        const resolvedIds = ["soil-low", "temp-high", "water-low", "air-poor", "esp-offline", "camera-offline"].filter(
           (id) => !newAlerts.some((a) => a.id === id)
         );
 
