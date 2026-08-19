@@ -34,7 +34,7 @@ export default function RootLayout({
           {children}
         </main>
         <footer className="border-t border-border/60 bg-card py-6 text-center text-xs text-muted-foreground font-semibold">
-          <p>© 2026 Smart Greenhouse IoT Portal • MIT License</p>
+          <p>© 2026 Smart Greenhouse IoT Portal • CC BY-NC 4.0 License</p>
         </footer>
       </body>
     </html>
